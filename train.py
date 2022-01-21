@@ -17,7 +17,11 @@ import torch.optim as optim
 
 from network import RAFTGMA
 
+from losses.get_loss import get_loss
+
 from utils import flow_viz
+from utils.warp_utils import flow_warp
+
 import datasets
 import evaluate
 
@@ -36,6 +40,25 @@ def convert_flow_to_image(image1, flow):
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def iterative_view_synthesis(model, image1, image2):
+    total_flow12 = torch.zeros_like(image1)[:, :2, :, :]
+    total_flow21 = torch.zeros_like(image1)[:, :2, :, :]
+
+    image1_c = image1.clone()
+    image2_c = image2.clone()
+
+    for _ in range(1):
+        current_flow12 = model(image1, image2)[-1]
+        image1 = flow_warp(image1, current_flow12)
+        total_flow12 += current_flow12
+
+        current_flow21 = model(image2_c, image1_c)[-1]
+        image2_c = flow_warp(image2_c, current_flow21)
+        total_flow21 += current_flow21
+
+    return torch.cat([total_flow12, total_flow21], dim=1)
 
 
 def sequence_loss(flow_preds, flow_gt, valid, gamma):
@@ -154,13 +177,17 @@ def main(args):
 
 
 def train(model, train_loader, optimizer, scheduler, logger, scaler, args):
+    flow_loss = get_loss(args)
+
     for i_batch, data_blob in enumerate(train_loader):
         tic = time.time()
         image1, image2, flow, valid = [x.cuda() for x in data_blob]
 
         optimizer.zero_grad()
 
-        flow_pred = model(image1, image2)
+        flow_pred = iterative_view_synthesis(model, image1, image2)[:, :2]#model(image1, image2)
+
+        target = torch.cat([image1, image2], dim=1)
 
         loss, metrics = sequence_loss(flow_pred, flow, valid, args.gamma)
         scaler.scale(loss).backward()
@@ -243,9 +270,19 @@ if __name__ == '__main__':
 
     parser.add_argument('--lr', type=float, default=0.00002)
     parser.add_argument('--num_steps', type=int, default=100000)
-    parser.add_argument('--batch_size', type=int, default=6)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--image_size', type=int, nargs='+', default=[384, 512])
     parser.add_argument('--gpus', type=int, nargs='+', default=[0, 1])
+
+    parser.add_argument('--alpha', type=float, default=10.0)
+    parser.add_argument('--w_l1', type=float, default=.0)
+    parser.add_argument('--w_smooth', type=float, default=75.0)
+    parser.add_argument('--w_ssim', type=float, default=.0)
+    parser.add_argument('--w_ternary', type=float, default=1.0)
+    parser.add_argument('--warp_pad', type=str, default='border')
+    parser.add_argument('--occ_from_back', action='store_true')
+    parser.add_argument('--with_bk', action='store_false')
+    parser.add_argument('--smooth_2nd', action='store_false')
 
     parser.add_argument('--wdecay', type=float, default=.00005)
     parser.add_argument('--epsilon', type=float, default=1e-8)
