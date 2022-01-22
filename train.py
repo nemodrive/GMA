@@ -43,39 +43,44 @@ def count_parameters(model):
 
 
 def iterative_view_synthesis(model, image1, image2):
-    total_flow12 = torch.zeros_like(image1)[:, :2, :, :]
-    total_flow21 = torch.zeros_like(image1)[:, :2, :, :]
+    total_flow_fw = [torch.zeros_like(image1)[:, :2, :, :] for _ in range(12)]
+    total_flow_bw = [torch.zeros_like(image1)[:, :2, :, :] for _ in range(12)]
 
     image1_c = image1.clone()
     image2_c = image2.clone()
 
     for _ in range(1):
-        current_flow12 = model(image1, image2)[-1]
-        image1 = flow_warp(image1, current_flow12)
-        total_flow12 += current_flow12
+        current_flow_fw = model(image1, image2)
+        image1 = flow_warp(image2, current_flow_fw[-1])
+        for i in range(len(current_flow_fw)):
+            total_flow_fw[i] += current_flow_fw[i]
 
-        current_flow21 = model(image2_c, image1_c)[-1]
-        image2_c = flow_warp(image2_c, current_flow21)
-        total_flow21 += current_flow21
+        current_flow_bw = model(image2_c, image1_c)
+        image2_c = flow_warp(image1_c, current_flow_bw[-1])
+        for i in range(len(current_flow_bw)):
+            total_flow_bw[i] += current_flow_bw[i]
 
-    return torch.cat([total_flow12, total_flow21], dim=1)
+    return [torch.cat([f1], dim=1) for f1, f2 in zip(total_flow_fw, total_flow_bw)]
 
 
-def sequence_loss(flow_preds, flow_gt, valid, gamma):
+def sequence_loss(flow_preds, target, loss_function, flow_gt, valid, gamma):
     """ Loss function defined over sequence of flow predictions """
 
-    n_predictions = len(flow_preds)    
-    flow_loss = 0.0
+    n_predictions = len(flow_preds)
 
     # exclude invalid pixels and extremely large displacements
     valid = (valid >= 0.5) & ((flow_gt**2).sum(dim=1).sqrt() < MAX_FLOW)
+
+    # flow_loss = loss_function(flow_preds, target)
+
+    flow_loss = 0.
 
     for i in range(n_predictions):
         i_weight = gamma**(n_predictions - i - 1)
         i_loss = (flow_preds[i] - flow_gt).abs()
         flow_loss += i_weight * (valid[:, None] * i_loss).mean()
 
-    epe = torch.sum((flow_preds[-1] - flow_gt)**2, dim=1).sqrt()
+    epe = torch.sum((flow_preds[-1][:, :2] - flow_gt)**2, dim=1).sqrt()
     epe = epe.view(-1)[valid.view(-1)]
 
     metrics = {
@@ -144,7 +149,6 @@ class Logger:
 
 
 def main(args):
-
     model = nn.DataParallel(RAFTGMA(args), device_ids=args.gpus)
 
     print(f"Parameter Count: {count_parameters(model)}")
@@ -152,7 +156,7 @@ def main(args):
     if args.restore_ckpt is not None:
         model.load_state_dict(torch.load(args.restore_ckpt), strict=False)
 
-    model.cuda()
+    model.to(f'cuda:{model.device_ids[0]}')
     model.train()
 
     # if args.stage != 'chairs':
@@ -181,15 +185,15 @@ def train(model, train_loader, optimizer, scheduler, logger, scaler, args):
 
     for i_batch, data_blob in enumerate(train_loader):
         tic = time.time()
-        image1, image2, flow, valid = [x.cuda() for x in data_blob]
+        image1, image2, flow, valid = [x.to(f'cuda:{model.device_ids[0]}') for x in data_blob]
 
         optimizer.zero_grad()
 
-        flow_pred = iterative_view_synthesis(model, image1, image2)[:, :2]#model(image1, image2)
+        flow_pred = model(image1, image2)
 
         target = torch.cat([image1, image2], dim=1)
 
-        loss, metrics = sequence_loss(flow_pred, flow, valid, args.gamma)
+        loss, metrics = sequence_loss(flow_pred, target, flow_loss, flow, valid, args.gamma)
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
 
@@ -272,16 +276,16 @@ if __name__ == '__main__':
     parser.add_argument('--num_steps', type=int, default=100000)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--image_size', type=int, nargs='+', default=[384, 512])
-    parser.add_argument('--gpus', type=int, nargs='+', default=[0, 1])
+    parser.add_argument('--gpus', type=int, nargs='+', default=[1, 2, 3])
 
     parser.add_argument('--alpha', type=float, default=10.0)
-    parser.add_argument('--w_l1', type=float, default=.0)
-    parser.add_argument('--w_smooth', type=float, default=75.0)
-    parser.add_argument('--w_ssim', type=float, default=.0)
-    parser.add_argument('--w_ternary', type=float, default=1.0)
+    parser.add_argument('--w_l1', type=float, default=.15)
+    parser.add_argument('--w_smooth', type=float, default=4.0)
+    parser.add_argument('--w_ssim', type=float, default=.85)
+    parser.add_argument('--w_ternary', type=float, default=.0)
     parser.add_argument('--warp_pad', type=str, default='border')
     parser.add_argument('--occ_from_back', action='store_true')
-    parser.add_argument('--with_bk', action='store_false')
+    parser.add_argument('--with_bk', action='store_true')
     parser.add_argument('--smooth_2nd', action='store_false')
 
     parser.add_argument('--wdecay', type=float, default=.00005)

@@ -44,7 +44,7 @@ class unFlowLoss(nn.modules.Module):
         :return:
         """
 
-        pyramid_flows = [output]#output
+        pyramid_flows = output
         im1_origin = target[:, :3]
         im2_origin = target[:, 3:]
 
@@ -58,8 +58,8 @@ class unFlowLoss(nn.modules.Module):
             b, _, h, w = flow.size()
 
             # resize images to match the size of layer
-            im1_scaled = F.interpolate(im1_origin, (h, w), mode='area')
-            im2_scaled = F.interpolate(im2_origin, (h, w), mode='area')
+            im1_scaled = im1_origin#F.interpolate(im1_origin, (h, w), mode='area')
+            im2_scaled = im2_origin#F.interpolate(im2_origin, (h, w), mode='area')
 
             im1_recons = flow_warp(im2_scaled, flow[:, :2], pad=self.args.warp_pad)
             im2_recons = flow_warp(im1_scaled, flow[:, 2:], pad=self.args.warp_pad)
@@ -107,4 +107,4 @@ class unFlowLoss(nn.modules.Module):
         smooth_loss = self.args.w_smooth * sum(pyramid_smooth_losses)
         total_loss = warp_loss + smooth_loss
 
-        return total_loss, warp_loss, smooth_loss, pyramid_flows[0].abs().mean()
+        return total_loss#, warp_loss, smooth_loss, pyramid_flows[0].abs().mean()

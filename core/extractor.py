@@ -20,10 +20,10 @@ class ResidualBlock(nn.Module):
                 self.norm3 = nn.GroupNorm(num_groups=num_groups, num_channels=planes)
 
         elif norm_fn == 'batch':
-            self.norm1 = nn.BatchNorm2d(planes)
-            self.norm2 = nn.BatchNorm2d(planes)
+            self.norm1 = nn.InstanceNorm2d(planes)
+            self.norm2 = nn.InstanceNorm2d(planes)
             if not stride == 1:
-                self.norm3 = nn.BatchNorm2d(planes)
+                self.norm3 = nn.InstanceNorm2d(planes)
 
         elif norm_fn == 'instance':
             self.norm1 = nn.InstanceNorm2d(planes)
@@ -74,11 +74,11 @@ class BottleneckBlock(nn.Module):
                 self.norm4 = nn.GroupNorm(num_groups=num_groups, num_channels=planes)
 
         elif norm_fn == 'batch':
-            self.norm1 = nn.BatchNorm2d(planes // 4)
-            self.norm2 = nn.BatchNorm2d(planes // 4)
-            self.norm3 = nn.BatchNorm2d(planes)
+            self.norm1 = nn.InstanceNorm2d(planes // 4)
+            self.norm2 = nn.InstanceNorm2d(planes // 4)
+            self.norm3 = nn.InstanceNorm2d(planes)
             if not stride == 1:
-                self.norm4 = nn.BatchNorm2d(planes)
+                self.norm4 = nn.InstanceNorm2d(planes)
 
         elif norm_fn == 'instance':
             self.norm1 = nn.InstanceNorm2d(planes // 4)
@@ -122,7 +122,7 @@ class BasicEncoder(nn.Module):
             self.norm1 = nn.GroupNorm(num_groups=8, num_channels=64)
 
         elif self.norm_fn == 'batch':
-            self.norm1 = nn.BatchNorm2d(64)
+            self.norm1 = nn.InstanceNorm2d(64)
 
         elif self.norm_fn == 'instance':
             self.norm1 = nn.InstanceNorm2d(64)
@@ -148,7 +148,7 @@ class BasicEncoder(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
+            elif isinstance(m, (nn.InstanceNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
                 if m.weight is not None:
                     nn.init.constant_(m.weight, 1)
                 if m.bias is not None:
